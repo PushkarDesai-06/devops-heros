@@ -1,0 +1,33 @@
+# Session 20 - monitoring demo: Prometheus + node-exporter + Grafana, with alert rules
+# and a provisioned Grafana dashboard (CPU, memory, application health).
+#
+# Stop the 03-prometheus / 04-grafana stacks first (they use the same container names and ports):
+#   (cd ../04-grafana && docker compose down)
+services:
+  node-exporter:
+    image: prom/node-exporter:v1.9.1
+    container_name: session20-node-exporter
+    ports:
+      - "9100:9100"
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    container_name: session20-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./alert-rules.yml:/etc/prometheus/alert-rules.yml:ro
+    depends_on:
+      - node-exporter
+
+  grafana:
+    image: grafana/grafana:12.1.1
+    container_name: session20-grafana
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus

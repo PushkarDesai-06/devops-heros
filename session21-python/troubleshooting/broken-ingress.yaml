@@ -1,0 +1,16 @@
+# Scenario 5 - Ingress returns 503.
+# Same mistake as the original chart template (helm/taskboard/templates/ingress.yaml):
+# /api points at a Service called "taskboard-backend" on port 8080, but the chart
+# creates "<release>-taskboard-backend" (taskboard-taskboard-backend) on port 8000.
+# ingress-nginx has no endpoints for that backend and answers 503.
+# Test with:  curl -i http://broken.taskboard.local/api/tasks   (add the host to /etc/hosts)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata: {name: taskboard-broken-ingress, namespace: taskboard}
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: broken.taskboard.local
+    http:
+      paths:
+      - {path: /api, pathType: Prefix, backend: {service: {name: taskboard-backend, port: {number: 8080}}}}

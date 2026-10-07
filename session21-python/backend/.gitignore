@@ -1,0 +1,8 @@
+# Python / test artefacts (the project-level .gitignore does not cover these)
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+test.db
+.env

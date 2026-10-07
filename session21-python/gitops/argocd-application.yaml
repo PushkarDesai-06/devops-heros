@@ -1,0 +1,43 @@
+# Argo CD Application for TaskBoard (GitOps).
+# Argo CD watches the Helm chart in Git and keeps the cluster in sync with it.
+# Deploying a new version = committing a new image tag to
+# helm/taskboard/values-minikube.yaml; no kubectl/helm access from CI is needed.
+#
+#   kubectl create namespace argocd
+#   kubectl apply -n argocd --server-side -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+#   kubectl apply -f gitops/argocd-application.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: taskboard
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/devops-student/taskboard.git
+    targetRevision: main
+    path: helm/taskboard
+    helm:
+      releaseName: taskboard
+      valueFiles:
+        - values-minikube.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: taskboard
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - RespectIgnoreDifferences=true
+  # The HPA owns the backend replica count. Without this, Argo CD would see the
+  # HPA's change as drift and selfHeal would keep resetting replicas to 2.
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      name: taskboard-taskboard-backend
+      jsonPointers:
+        - /spec/replicas

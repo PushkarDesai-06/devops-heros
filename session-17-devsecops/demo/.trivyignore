@@ -1,0 +1,4 @@
+# Accepted risks for the image scan, one CVE ID per line, each with a reason and an expiry.
+# Keep this list empty unless a finding has been reviewed. Example:
+#
+# CVE-2024-00000  # not reachable: package only used at build time, review by 2026-12-31

@@ -1,0 +1,4 @@
+# Runtime dependencies that end up in the container image.
+# Flask app + a production WSGI server (the Flask dev server / debug=True is never used in the image).
+-r requirements.txt
+gunicorn==23.0.0

@@ -1,0 +1,22 @@
+# Scenario 1 - fix for broken-image.yaml: use an image that exists in the registry
+# (CI pushes ghcr.io/<owner>/taskboard-backend:<git sha>) and give the backend a
+# DATABASE_URL, otherwise it would only move on to CrashLoopBackOff.
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: taskboard-broken-image, namespace: taskboard}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: broken-image}}
+  template:
+    metadata: {labels: {app: broken-image}}
+    spec:
+      containers:
+        - name: backend
+          image: ghcr.io/devops-student/taskboard-backend:9c41e7a3d2b84f15a6e0c7d9b1f3a5e8c2d4f6a1
+          env:
+            - name: DB_USER
+              valueFrom: {secretKeyRef: {name: taskboard-postgres, key: username}}
+            - name: DB_PASSWORD
+              valueFrom: {secretKeyRef: {name: taskboard-postgres, key: password}}
+            - name: DATABASE_URL
+              value: postgresql+psycopg://$(DB_USER):$(DB_PASSWORD)@taskboard-postgres:5432/taskboard

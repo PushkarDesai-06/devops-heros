@@ -1,0 +1,56 @@
+# DevSecOps checks that run next to ci-cd.yml (which already scans the built
+# images with Trivy). Each job is a security gate: a finding fails the job, and
+# with branch protection ("require status checks") a failing gate blocks the merge.
+name: DevSecOps
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  secret-scan:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0}          # gitleaks needs history to scan the pushed commits
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  sast:
+    name: SAST (Bandit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install bandit==1.9.4
+      - name: Bandit - fail on medium or high severity
+        run: bandit -r backend/app -ll
+
+  sca:
+    name: SCA (pip-audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install pip-audit==2.10.1
+      - name: Audit Python dependencies
+        run: pip-audit -r backend/requirements.txt --strict
+
+  iac-scan:
+    name: IaC scan (Trivy config)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scan Terraform, Dockerfiles and Kubernetes manifests
+        uses: aquasecurity/trivy-action@0.30.0
+        with:
+          scan-type: config
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          exit-code: '0'                # report only for now; see security/README.md

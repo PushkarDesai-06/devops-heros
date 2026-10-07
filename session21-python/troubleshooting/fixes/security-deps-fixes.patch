@@ -1,0 +1,28 @@
+diff -ruN a/backend/requirements.txt b/backend/requirements.txt
+--- a/backend/requirements.txt
++++ b/backend/requirements.txt
+@@ -1,9 +1,9 @@
+-fastapi==0.115.6
++fastapi==0.142.3
+ uvicorn[standard]==0.34.0
+ sqlalchemy==2.0.36
+ psycopg[binary]==3.2.3
+ pydantic-settings==2.7.1
+-prometheus-fastapi-instrumentator==7.0.2
++prometheus-fastapi-instrumentator==8.1.0
+ alembic==1.14.0
+-pytest==8.3.4
++pytest==9.0.3
+ httpx==0.28.1
+diff -ruN a/frontend/Dockerfile b/frontend/Dockerfile
+--- a/frontend/Dockerfile
++++ b/frontend/Dockerfile
+@@ -4,7 +4,7 @@
+ RUN npm install
+ COPY . .
+ RUN npm run build
+-FROM nginx:1.27-alpine
++FROM nginx:1.30-alpine
+ COPY --from=build /app/dist /usr/share/nginx/html
+ COPY nginx.conf /etc/nginx/conf.d/default.conf
+ EXPOSE 80

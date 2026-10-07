@@ -1,0 +1,16 @@
+# gitleaks configuration (secret scanning)
+# Used by:  gitleaks dir --redact -v .            (local)
+#           gitleaks/gitleaks-action@v2           (CI, via GITLEAKS_CONFIG)
+title = "session-17 devsecops gitleaks config"
+
+# Start from gitleaks' built-in rules (AWS keys, GitHub tokens, private keys, ...)
+[extend]
+useDefault = true
+
+# Things that are never real secrets in this project.
+[[allowlists]]
+description = "binary coverage database and vendored static assets"
+paths = [
+  '''(^|/)\.coverage$''',
+  '''(^|/)app/static/''',
+]

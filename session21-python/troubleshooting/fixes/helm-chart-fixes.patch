@@ -1,0 +1,77 @@
+diff -ruN a/helm/taskboard/templates/backend-alias-service.yaml b/helm/taskboard/templates/backend-alias-service.yaml
+--- a/helm/taskboard/templates/backend-alias-service.yaml
++++ b/helm/taskboard/templates/backend-alias-service.yaml
+@@ -0,0 +1,15 @@
++# The frontend image's nginx.conf proxies /api/ and /health to http://backend:8000
++# (the Docker Compose service name). nginx resolves that name when it starts and
++# exits with "host not found in upstream" if it does not exist, so the frontend
++# Pods crash-loop. This Service gives the backend the same short name inside the
++# namespace. It deliberately has no "app" label, so the ServiceMonitor does not
++# scrape the backend twice.
++apiVersion: v1
++kind: Service
++metadata:
++  name: backend
++spec:
++  selector: {app: taskboard-backend}
++  ports:
++    - port: 8000
++      targetPort: 8000
+diff -ruN a/helm/taskboard/templates/backend-deployment.yaml b/helm/taskboard/templates/backend-deployment.yaml
+--- a/helm/taskboard/templates/backend-deployment.yaml
++++ b/helm/taskboard/templates/backend-deployment.yaml
+@@ -9,14 +9,30 @@
+   template:
+     metadata:
+       labels: {app: taskboard-backend}
++      annotations:
++        # roll the Pods when the config or credentials change (env is only read at start-up)
++        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
++        checksum/secret: {{ include (print $.Template.BasePath "/postgres.yaml") . | sha256sum }}
+     spec:
++      {{- with .Values.imagePullSecrets }}
++      imagePullSecrets:
++{{ toYaml . | indent 8 }}
++      {{- end }}
+       containers:
+         - name: backend
+           image: "{{ .Values.backend.image }}:{{ .Values.backend.tag }}"
+           ports: [{containerPort: 8000}]
++          envFrom:
++            - configMapRef:
++                name: {{ include "taskboard.fullname" . }}-config
+           env:
++            - name: POSTGRES_USER
++              valueFrom: {secretKeyRef: {name: taskboard-postgres, key: username}}
++            - name: POSTGRES_PASSWORD
++              valueFrom: {secretKeyRef: {name: taskboard-postgres, key: password}}
++            # $(VAR) is expanded by the kubelet from the variables defined above / via envFrom
+             - name: DATABASE_URL
+-              value: "postgresql+psycopg://{{ .Values.postgres.username }}:{{ .Values.postgres.password }}@{{ .Values.postgres.host }}:5432/{{ .Values.postgres.database }}"
++              value: "postgresql+psycopg://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):5432/$(POSTGRES_DB)"
+           readinessProbe:
+             httpGet: {path: /ready, port: 8000}
+             initialDelaySeconds: 10
+diff -ruN a/helm/taskboard/templates/configmap.yaml b/helm/taskboard/templates/configmap.yaml
+--- a/helm/taskboard/templates/configmap.yaml
++++ b/helm/taskboard/templates/configmap.yaml
+@@ -0,0 +1,8 @@
++apiVersion: v1
++kind: ConfigMap
++metadata:
++  name: {{ include "taskboard.fullname" . }}-config
++data:
++  APP_NAME: "TaskBoard API"
++  POSTGRES_HOST: {{ .Values.postgres.host | quote }}
++  POSTGRES_DB: {{ .Values.postgres.database | quote }}
+diff -ruN a/helm/taskboard/templates/ingress.yaml b/helm/taskboard/templates/ingress.yaml
+--- a/helm/taskboard/templates/ingress.yaml
++++ b/helm/taskboard/templates/ingress.yaml
+@@ -8,6 +8,6 @@
+   - host: {{ .Values.ingress.host }}
+     http:
+       paths:
+-      - {path: /api, pathType: Prefix, backend: {service: {name: taskboard-backend, port: {number: 8080}}}}
++      - {path: /api, pathType: Prefix, backend: {service: {name: {{ include "taskboard.fullname" . }}-backend, port: {number: 8000}}}}
+       - {path: /, pathType: Prefix, backend: {service: {name: taskboard-frontend, port: {number: 80}}}}
+ {{- end }}

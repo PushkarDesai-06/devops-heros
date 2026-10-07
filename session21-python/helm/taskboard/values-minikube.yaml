@@ -1,0 +1,24 @@
+# Values for the local minikube demo (Session 21 submission).
+# Used by `helm upgrade --install ... -f helm/taskboard/values-minikube.yaml`
+# and by the Argo CD Application in gitops/argocd-application.yaml.
+#
+# GitOps: CI builds images tagged with the commit SHA; deploying a new version
+# means committing a new tag here. Argo CD notices the commit and syncs.
+frontend:
+  image: ghcr.io/devops-student/taskboard-frontend
+  tag: 7f3d9b28c1e5a4f60d7b3e9c2a8f1d5b6e0c4a97
+backend:
+  image: ghcr.io/devops-student/taskboard-backend
+  tag: 7f3d9b28c1e5a4f60d7b3e9c2a8f1d5b6e0c4a97
+replicaCount: 2
+ingress:
+  enabled: true
+  host: taskboard.local
+hpa:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 60
+monitoring:
+  serviceMonitor:
+    enabled: true

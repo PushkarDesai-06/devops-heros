@@ -1,0 +1,16 @@
+# Keep the build context small and free of local junk / secrets.
+# (The course folder contains a file literally named ".dockerignore  │", which Docker ignores.)
+.git
+.github
+.venv
+__pycache__/
+*.pyc
+.pytest_cache/
+.coverage
+htmlcov/
+tests/
+k8s/
+k8s-secure/
+*.md
+.env
+.env.*

@@ -1,0 +1,12 @@
+# Scenario 5 - fix: point /api at the Service and port that really exist.
+#   kubectl get svc -n taskboard   ->  taskboard-taskboard-backend   8000/TCP
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata: {name: taskboard-broken-ingress, namespace: taskboard}
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: broken.taskboard.local
+    http:
+      paths:
+      - {path: /api, pathType: Prefix, backend: {service: {name: taskboard-taskboard-backend, port: {number: 8000}}}}

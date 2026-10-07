@@ -1,0 +1,306 @@
+# Session 17 - complete CI/CD + DevSecOps pipeline with security gates.
+#
+# Flow:
+#   Unit Tests ─┐
+#   SAST       ─┤
+#   SCA        ─┼─> Build & Scan Image ─> Security Gate ─> Push to GHCR ─> Deploy to Kubernetes
+#   Secret Scan─┘     (docker build +        (all checks     (same image      (kind cluster,
+#                      Trivy gate)            must pass)      that was         rollout + smoke test)
+#                                                             scanned)
+#
+# This repo (devops-student/devops-heros) is a monorepo. GitHub only runs workflows from
+# the repository root, so this file is installed as:
+#     .github/workflows/session17-devsecops.yml
+#   cp session-17-devsecops/demo/.github/workflows/session17-devsecops.yml .github/workflows/
+# All shell steps run inside session-17-devsecops/demo (see `defaults`).
+
+name: Session 17 DevSecOps Pipeline
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "session-17-devsecops/demo/**"
+      - ".github/workflows/session17-devsecops.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "session-17-devsecops/demo/**"
+      - ".github/workflows/session17-devsecops.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: session17-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  APP_DIR: session-17-devsecops/demo
+  IMAGE: ghcr.io/${{ github.repository_owner }}/session17-python
+  PYTHON_VERSION: "3.12"
+
+defaults:
+  run:
+    working-directory: session-17-devsecops/demo
+
+jobs:
+
+  # ──────────────────────────────────────────────────────────────
+  # 1. Build + unit tests (quality gate: tests pass, coverage >= 60%)
+  # ──────────────────────────────────────────────────────────────
+  test:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: ${{ env.APP_DIR }}/requirements*.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Run tests
+        run: pytest -v --cov=app --cov-report=term-missing --cov-fail-under=60
+
+  # ──────────────────────────────────────────────────────────────
+  # 2. SAST - CodeQL (results -> Security tab) + Bandit (gate)
+  # ──────────────────────────────────────────────────────────────
+  sast:
+    name: SAST - CodeQL + Bandit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: python
+          source-root: ${{ env.APP_DIR }}
+
+      - name: Analyze code (CodeQL)
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:python"
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Bandit
+        run: pip install bandit==1.8.6
+
+      - name: Bandit report (all findings, never fails)
+        run: bandit -r app -c bandit.yaml --exit-zero
+
+      - name: Bandit gate (fail on HIGH severity + HIGH confidence)
+        run: bandit -r app -c bandit.yaml --severity-level high --confidence-level high
+
+  # ──────────────────────────────────────────────────────────────
+  # 3. SCA - known-vulnerable dependencies (pip-audit exits 1 on findings)
+  # ──────────────────────────────────────────────────────────────
+  sca:
+    name: SCA - pip-audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install pip-audit
+        run: pip install pip-audit==2.9.0
+
+      - name: Audit runtime dependencies
+        run: pip-audit -r requirements-prod.txt
+
+  # ──────────────────────────────────────────────────────────────
+  # 4. Secret scanning - gitleaks on the pushed commits
+  # ──────────────────────────────────────────────────────────────
+  secret-scan:
+    name: Secret Scan - gitleaks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code (full history)
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_VERSION: 8.28.0
+          GITLEAKS_CONFIG: ${{ env.APP_DIR }}/.gitleaks.toml
+
+  # ──────────────────────────────────────────────────────────────
+  # 5. Docker build + container image scan (Trivy gate)
+  #    The exact image that was scanned is saved as an artifact and
+  #    pushed later - it is never rebuilt.
+  # ──────────────────────────────────────────────────────────────
+  build-scan:
+    name: Build & Scan Image
+    needs: [test, sast, sca, secret-scan]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Build Docker image
+        run: docker build -f Dockerfile.secure -t "$IMAGE:$GITHUB_SHA" .
+
+      - name: Install Trivy
+        run: |
+          sudo apt-get install -y wget gnupg
+          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key \
+            | gpg --dearmor | sudo tee /usr/share/keyrings/trivy.gpg > /dev/null
+          echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb generic main" \
+            | sudo tee /etc/apt/sources.list.d/trivy.list
+          sudo apt-get update && sudo apt-get install -y trivy
+
+      - name: Scan image with Trivy (gate)
+        run: trivy image --config trivy.yaml "$IMAGE:$GITHUB_SHA"
+
+      - name: Save scanned image
+        run: docker save "$IMAGE:$GITHUB_SHA" | gzip > "$RUNNER_TEMP/image.tar.gz"
+
+      - name: Upload image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: session17-image
+          path: ${{ runner.temp }}/image.tar.gz
+          retention-days: 3
+
+  # ──────────────────────────────────────────────────────────────
+  # 6. Security gate - one explicit decision over every check
+  #    `if: always()` makes it run (and fail loudly) even when an
+  #    earlier job failed or was skipped.
+  # ──────────────────────────────────────────────────────────────
+  security-gate:
+    name: Security Gate
+    needs: [test, sast, sca, secret-scan, build-scan]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Evaluate results
+        working-directory: .
+        env:
+          TEST: ${{ needs.test.result }}
+          SAST: ${{ needs.sast.result }}
+          SCA: ${{ needs.sca.result }}
+          SECRETS: ${{ needs.secret-scan.result }}
+          IMAGE_SCAN: ${{ needs.build-scan.result }}
+        run: |
+          status=0
+          printf '%-22s %s\n' "CHECK" "RESULT"
+          for check in "unit-tests:$TEST" "sast:$SAST" "sca:$SCA" "secret-scan:$SECRETS" "build-and-image-scan:$IMAGE_SCAN"; do
+            name="${check%%:*}"; result="${check#*:}"
+            printf '%-22s %s\n' "$name" "$result"
+            if [ "$result" != "success" ]; then status=1; fi
+          done
+          if [ "$status" -ne 0 ]; then
+            echo "::error title=Security gate::Security gate FAILED - image will not be pushed or deployed"
+            exit 1
+          fi
+          echo "Security gate PASSED - image $IMAGE:$GITHUB_SHA may be published"
+
+  # ──────────────────────────────────────────────────────────────
+  # 7. Push the scanned image to GitHub Container Registry
+  # ──────────────────────────────────────────────────────────────
+  push:
+    name: Push Image to GHCR
+    needs: [security-gate]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Download image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: session17-image
+          path: ${{ runner.temp }}
+
+      - name: Load image
+        working-directory: .
+        run: gunzip -c "$RUNNER_TEMP/image.tar.gz" | docker load
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push image
+        working-directory: .
+        run: |
+          docker tag "$IMAGE:$GITHUB_SHA" "$IMAGE:latest"
+          docker push "$IMAGE:$GITHUB_SHA"
+          docker push "$IMAGE:latest"
+
+  # ──────────────────────────────────────────────────────────────
+  # 8. Deploy to Kubernetes
+  #    A GitHub-hosted runner cannot reach minikube on a laptop
+  #    (see 03-kubernetes-deployment), so CI deploys the published
+  #    image to a throw-away kind cluster to prove the manifests,
+  #    the image pull and the rollout work. The same manifests are
+  #    applied to minikube by hand.
+  # ──────────────────────────────────────────────────────────────
+  deploy:
+    name: Deploy to Kubernetes
+    needs: [push]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1.12.0
+        with:
+          cluster_name: session17
+
+      - name: Create GHCR pull secret
+        run: |
+          kubectl create secret docker-registry ghcr-pull \
+            --docker-server=ghcr.io \
+            --docker-username="${{ github.actor }}" \
+            --docker-password="${{ secrets.GITHUB_TOKEN }}"
+
+      - name: Deploy manifests
+        run: |
+          sed "s|__IMAGE_TAG__|$GITHUB_SHA|g" k8s-secure/deployment.yaml | kubectl apply -f -
+          kubectl apply -f k8s/service.yaml
+
+      - name: Wait for rollout
+        run: kubectl rollout status deployment/session17-python --timeout=120s
+
+      - name: Smoke test
+        run: |
+          kubectl get deploy,pods -l app=session17-python -o wide
+          kubectl get service session17-python
+          kubectl port-forward service/session17-python 5001:80 > /dev/null 2>&1 &
+          sleep 3
+          curl -fsS http://localhost:5001/health
+          echo
+          curl -fsS http://localhost:5001/api/status

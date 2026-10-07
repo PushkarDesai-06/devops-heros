@@ -1,0 +1,73 @@
+# Deployment for the image published by the DevSecOps pipeline (GHCR).
+# Same name/labels as k8s/deployment.yaml, so k8s/service.yaml (NodePort 30001) still selects it.
+# __IMAGE_TAG__ is replaced with the commit SHA that passed every security gate.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: session17-python
+  labels:
+    app: session17-python
+spec:
+  replicas: 2
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      app: session17-python
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: session17-python
+    spec:
+      # GHCR packages are private by default; this secret holds a token with read:packages.
+      # (If the package is public the secret is not needed - a missing secret only logs a warning.)
+      imagePullSecrets:
+        - name: ghcr-pull
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: session17-python
+          image: ghcr.io/devops-student/session17-python:__IMAGE_TAG__
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 5001
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 50m
+              memory: 96Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

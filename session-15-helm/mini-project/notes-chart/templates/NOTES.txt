@@ -1,0 +1,8 @@
+{{ .Values.app.name }} ({{ .Values.app.environment }}) is deployed as release "{{ .Release.Name }}".
+
+  Replicas : {{ .Values.replicaCount }}
+  Image    : {{ .Values.image.repository }}:{{ .Values.image.tag }}
+
+Open the app:
+  export NODE_IP=$(kubectl get nodes -o jsonpath="{.items[0].status.addresses[0].address}")
+  echo http://$NODE_IP:{{ .Values.service.nodePort }}

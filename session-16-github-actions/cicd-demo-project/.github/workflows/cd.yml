@@ -1,0 +1,113 @@
+# CD Pipeline - Continuous Delivery for the Session 16 calculator.
+#
+# Runs automatically after "CI Pipeline" finishes on main. If CI succeeded it
+# publishes the Docker image to GitHub Container Registry (GHCR) and deploys it
+# to the "staging" environment (a simulated deploy: pull + run + smoke test,
+# because the course has no long-running server).
+#
+# Copy to <repo-root>/.github/workflows/cd.yml to activate it (see README.md).
+# Required secret: DEPLOY_TOKEN (Settings > Secrets and variables > Actions).
+
+name: CD Pipeline
+
+on:
+  workflow_run:                         # chain: start when CI completes
+    workflows: ["CI Pipeline"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write                       # needed to push to ghcr.io with GITHUB_TOKEN
+
+concurrency:                            # never run two deployments at once
+  group: cd-staging
+  cancel-in-progress: false
+
+env:
+  APP_DIR: session-16-github-actions/cicd-demo-project
+  # GHCR image names must be lowercase
+  IMAGE: ghcr.io/${{ github.repository_owner }}/session16-calculator
+
+jobs:
+  # ------------------------------------------------------------- PUBLISH ---
+  publish:
+    name: Publish Docker Image
+    # only deliver commits whose CI run was green
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: session-16-github-actions/cicd-demo-project
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+    steps:
+      - name: Checkout tested commit
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Compute image tag
+        id: meta
+        run: |
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          echo "image=${IMAGE}:sha-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "Image tag: ${IMAGE}:sha-${SHORT_SHA}"
+
+      - name: Log in to GitHub Container Registry
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}       # SECRET (automatic token)
+        run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+      - name: Build and push image
+        env:
+          IMAGE_REF: ${{ steps.meta.outputs.image }}
+        run: |
+          docker build -t "$IMAGE_REF" -t "${IMAGE}:latest" .
+          docker push "$IMAGE_REF"
+          docker push "${IMAGE}:latest"
+
+  # -------------------------------------------------------------- DEPLOY ---
+  deploy:
+    name: Deploy to Staging
+    needs: publish
+    runs-on: ubuntu-latest
+    environment:
+      name: staging                     # shows up under Deployments / Environments
+    env:
+      IMAGE_REF: ${{ needs.publish.outputs.image }}
+    steps:
+      - name: Check deploy secret
+        env:
+          DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}     # SECRET (repository secret)
+        run: |
+          if [ -z "$DEPLOY_TOKEN" ]; then
+            echo "::error::DEPLOY_TOKEN secret is not configured"
+            exit 1
+          fi
+          echo "DEPLOY_TOKEN is available (its value is masked in logs)."
+
+      - name: Log in to GitHub Container Registry
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+      - name: Pull released image
+        run: docker pull "$IMAGE_REF"
+
+      - name: Deploy to staging and smoke test
+        run: |
+          echo "Deploying $IMAGE_REF to staging..."
+          output=$(printf '10 + 5\n9 / 3\nq\n' | docker run -i --rm "$IMAGE_REF")
+          echo "$output"
+          echo "$output" | grep -q "Result: 15.0"
+          echo "Staging deployment verified."
+
+      - name: Write deployment summary
+        run: |
+          {
+            echo "### Deployed to staging :rocket:"
+            echo "- Image: \`$IMAGE_REF\`"
+            echo "- Commit: \`${{ github.event.workflow_run.head_sha || github.sha }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,10 @@
+# Bandit configuration (SAST for Python)
+# Used by:  bandit -r app -c bandit.yaml ...
+#
+# Nothing is skipped: every finding is reported. The CI gate only *blocks* on
+# HIGH severity + HIGH confidence findings (see the workflow); everything else is
+# reported in the job log and in the CodeQL results on the Security tab.
+exclude_dirs:
+  - tests
+  - .venv
+skips: []

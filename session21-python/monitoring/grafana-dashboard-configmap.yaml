@@ -1,0 +1,52 @@
+# TaskBoard Grafana dashboard, loaded automatically by the Grafana sidecar that
+# kube-prometheus-stack runs (it imports every ConfigMap labelled grafana_dashboard=1).
+#   kubectl apply -f monitoring/grafana-dashboard-configmap.yaml
+# Metrics come from prometheus-fastapi-instrumentator (/metrics on the backend)
+# and from cAdvisor / kube-state-metrics.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: taskboard-dashboard
+  namespace: monitoring
+  labels:
+    grafana_dashboard: "1"
+data:
+  taskboard.json: |
+    {
+      "title": "TaskBoard API",
+      "uid": "taskboard-api",
+      "tags": ["taskboard", "fastapi"],
+      "timezone": "browser",
+      "refresh": "30s",
+      "time": {"from": "now-1h", "to": "now"},
+      "schemaVersion": 39,
+      "templating": {"list": [
+        {"name": "datasource", "type": "datasource", "query": "prometheus"},
+        {"name": "namespace", "type": "constant", "query": "taskboard"}
+      ]},
+      "panels": [
+        {"id": 1, "type": "stat", "title": "Request rate",
+         "gridPos": {"x": 0, "y": 0, "w": 6, "h": 5},
+         "fieldConfig": {"defaults": {"unit": "reqps"}},
+         "targets": [{"datasource": {"uid": "${datasource}"}, "expr": "sum(rate(http_requests_total{namespace=\"$namespace\"}[2m]))"}]},
+        {"id": 2, "type": "stat", "title": "5xx error ratio",
+         "gridPos": {"x": 6, "y": 0, "w": 6, "h": 5},
+         "fieldConfig": {"defaults": {"unit": "percentunit"}},
+         "targets": [{"datasource": {"uid": "${datasource}"}, "expr": "sum(rate(http_requests_total{namespace=\"$namespace\",status=\"5xx\"}[5m])) / sum(rate(http_requests_total{namespace=\"$namespace\"}[5m]))"}]},
+        {"id": 3, "type": "stat", "title": "p95 latency",
+         "gridPos": {"x": 12, "y": 0, "w": 6, "h": 5},
+         "fieldConfig": {"defaults": {"unit": "s"}},
+         "targets": [{"datasource": {"uid": "${datasource}"}, "expr": "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{namespace=\"$namespace\"}[5m])))"}]},
+        {"id": 4, "type": "stat", "title": "Backend replicas",
+         "gridPos": {"x": 18, "y": 0, "w": 6, "h": 5},
+         "targets": [{"datasource": {"uid": "${datasource}"}, "expr": "kube_deployment_status_replicas_available{namespace=\"$namespace\",deployment=\"taskboard-taskboard-backend\"}"}]},
+        {"id": 5, "type": "timeseries", "title": "Requests per second by handler",
+         "gridPos": {"x": 0, "y": 5, "w": 12, "h": 9},
+         "fieldConfig": {"defaults": {"unit": "reqps"}},
+         "targets": [{"datasource": {"uid": "${datasource}"}, "expr": "sum by (handler) (rate(http_requests_total{namespace=\"$namespace\",handler!=\"/metrics\"}[2m]))", "legendFormat": "{{handler}}"}]},
+        {"id": 6, "type": "timeseries", "title": "Backend CPU by pod",
+         "gridPos": {"x": 12, "y": 5, "w": 12, "h": 9},
+         "fieldConfig": {"defaults": {"unit": "cores"}},
+         "targets": [{"datasource": {"uid": "${datasource}"}, "expr": "sum by (pod) (rate(container_cpu_usage_seconds_total{namespace=\"$namespace\",container=\"backend\"}[2m]))", "legendFormat": "{{pod}}"}]}
+      ]
+    }

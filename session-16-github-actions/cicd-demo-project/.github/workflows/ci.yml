@@ -1,0 +1,131 @@
+# CI Pipeline - Continuous Integration for the Session 16 calculator.
+#
+# GitHub only runs workflows stored in the REPOSITORY ROOT .github/workflows/.
+# This copy lives next to the project for reference; copy it to
+# <repo-root>/.github/workflows/ci.yml to activate it (see README.md).
+
+name: CI Pipeline                       # WORKFLOW name (shown in the Actions tab)
+
+on:                                     # TRIGGERS
+  push:
+    branches: [main]
+    paths:
+      - "session-16-github-actions/cicd-demo-project/**"
+      - ".github/workflows/ci.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "session-16-github-actions/cicd-demo-project/**"
+      - ".github/workflows/ci.yml"
+  workflow_dispatch:                    # manual "Run workflow" button
+
+permissions:
+  contents: read                        # least privilege for the GITHUB_TOKEN
+
+env:
+  APP_DIR: session-16-github-actions/cicd-demo-project
+  PYTHON_VERSION: "3.12"
+
+defaults:
+  run:
+    # every `run:` step starts inside the project folder
+    # (`uses:` steps such as upload-artifact are NOT affected - they need full paths)
+    working-directory: session-16-github-actions/cicd-demo-project
+
+jobs:                                   # JOBS
+  # ---------------------------------------------------------------- TEST ---
+  test:
+    name: Test Application
+    runs-on: ubuntu-latest              # RUNNER (GitHub-hosted VM)
+    steps:                              # STEPS
+      - name: Checkout source code
+        uses: actions/checkout@v6
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run tests
+        run: pytest -v --junitxml=reports/junit.xml
+
+      - name: Upload test report        # ARTIFACT (uploaded even if tests fail)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report
+          path: ${{ env.APP_DIR }}/reports/
+          retention-days: 7
+
+  # ------------------------------------------------------- SECURITY CHECK ---
+  security-check:
+    name: Security Check
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v6
+
+      - name: Check for sensitive files
+        run: |
+          echo "Checking project for common sensitive files..."
+          found=$(find . -type f \( -name ".env" -o -name "*.pem" -o -name "*.key" \) -print)
+          if [ -n "$found" ]; then
+            echo "::error::Potential sensitive file(s) committed:"
+            echo "$found"
+            exit 1
+          fi
+          echo "No common sensitive files found."
+
+  # ---------------------------------------------------------------- BUILD ---
+  build:
+    name: Build Application
+    needs: test                         # runs only if `test` succeeded
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v6
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Build application
+        run: |
+          chmod +x build.sh
+          ./build.sh
+
+      - name: Show build output
+        run: cat build/build-info.txt
+
+      - name: Upload build artifact     # ARTIFACT
+        uses: actions/upload-artifact@v4
+        with:
+          name: calculator-build
+          path: ${{ env.APP_DIR }}/build/
+
+  # --------------------------------------------------------------- DOCKER ---
+  docker:
+    name: Docker Build & Smoke Test
+    needs: [build, security-check]      # waits for BOTH jobs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v6
+
+      - name: Build Docker image
+        run: docker build -t session16-calculator:${{ github.sha }} .
+
+      - name: Smoke test container
+        run: |
+          output=$(printf '10 + 5\n8 * 4\nq\n' | docker run -i --rm session16-calculator:${{ github.sha }})
+          echo "$output"
+          echo "$output" | grep -q "Result: 15.0"
+          echo "$output" | grep -q "Result: 32.0"
+          echo "Smoke test passed."

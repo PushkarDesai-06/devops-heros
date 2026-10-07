@@ -1,0 +1,9 @@
+# Scenario 2 - fix for broken-service.yaml. Two problems:
+#   1. selector app=label-that-does-not-exist matches no Pod  -> no endpoints
+#   2. targetPort 8080, but the backend container listens on 8000
+apiVersion: v1
+kind: Service
+metadata: {name: broken-service, namespace: taskboard}
+spec:
+  selector: {app: taskboard-backend}
+  ports: [{port: 8080, targetPort: 8000}]

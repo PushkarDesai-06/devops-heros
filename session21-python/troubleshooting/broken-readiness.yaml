@@ -1,0 +1,39 @@
+# Scenario 4 - failing readiness probe.
+# The probe calls /readyz, but the FastAPI app only exposes /ready, so every probe
+# gets a 404. The container keeps running (liveness is fine) but never becomes
+# Ready, so the Service sends it no traffic.
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: taskboard-readiness-demo, namespace: taskboard}
+spec:
+  replicas: 2
+  selector: {matchLabels: {app: taskboard-readiness-demo}}
+  template:
+    metadata: {labels: {app: taskboard-readiness-demo}}
+    spec:
+      containers:
+        - name: backend
+          image: ghcr.io/devops-student/taskboard-backend:9c41e7a3d2b84f15a6e0c7d9b1f3a5e8c2d4f6a1
+          ports: [{containerPort: 8000}]
+          env:
+            - name: DB_USER
+              valueFrom: {secretKeyRef: {name: taskboard-postgres, key: username}}
+            - name: DB_PASSWORD
+              valueFrom: {secretKeyRef: {name: taskboard-postgres, key: password}}
+            - name: DATABASE_URL
+              value: postgresql+psycopg://$(DB_USER):$(DB_PASSWORD)@taskboard-postgres:5432/taskboard
+          readinessProbe:
+            httpGet: {path: /readyz, port: 8000}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /health, port: 8000}
+            initialDelaySeconds: 20
+            periodSeconds: 15
+---
+apiVersion: v1
+kind: Service
+metadata: {name: taskboard-readiness-demo, namespace: taskboard}
+spec:
+  selector: {app: taskboard-readiness-demo}
+  ports: [{port: 8000, targetPort: 8000}]
